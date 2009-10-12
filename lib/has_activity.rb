@@ -45,6 +45,8 @@ module Elctech
           options[:padding] ||= true
           options[:order] ||= :asc
           options[:group_by] ||= :day
+
+	  adapter = ActiveRecord::Base::connection.instance_variable_get(:@config)[:adapter]
           
           case options[:group_by]
           when :hour
@@ -52,11 +54,15 @@ module Elctech
               ["SELECT
                   #{activity_options[:by]} AS timestamp,
                   COUNT(*) AS activity_count,
-                  ((((YEAR(now()) - YEAR(#{activity_options[:by]}))*365)+(DAYOFYEAR(now())-DAYOFYEAR(#{activity_options[:by]})))*24)+(HOUR(now())-HOUR(#{activity_options[:by]})) as hours_ago,
-                  CONCAT(YEAR(#{activity_options[:by]}), CONCAT(DAYOFYEAR(#{activity_options[:by]}), HOUR(#{activity_options[:by]}))) AS unique_hour
-                FROM #{self.table_name}
+                  ((((EXTRACT(year from now()) - EXTRACT(year from #{activity_options[:by]}))*365)+(EXTRACT(day from now())-EXTRACT(day from #{activity_options[:by]})))*24)+(EXTRACT(hour from now())-EXTRACT(hour from #{activity_options[:by]})) as hours_ago," +
+                  if adapter == 'postgresql'
+                    " ((EXTRACT(year from #{activity_options[:by]})::varchar) || (EXTRACT(day from #{activity_options[:by]})::varchar || EXTRACT(hour from #{activity_options[:by]})::varchar)) AS unique_hour "
+                  else
+                    " CONCAT(EXTRACT(year from #{activity_options[:by]}), CONCAT(EXTRACT(day from #{activity_options[:by]}), EXTRACT(hour from #{activity_options[:by]}))) AS unique_hour "
+                  end +
+                "FROM #{self.table_name}
                 WHERE #{activity_scope} AND #{activity_options[:by]} > ?
-                GROUP BY unique_hour
+                GROUP BY created_at, unique_hour
                 ORDER BY #{activity_options[:by]} ASC",
                 since.to_s(:db)
               ]
@@ -68,11 +74,11 @@ module Elctech
               ["SELECT
                   #{activity_options[:by]} AS timestamp,
                   COUNT(*) AS activity_count,
-                  ((YEAR(now()) - YEAR(#{activity_options[:by]}))*52)+(WEEK(now())-WEEK(#{activity_options[:by]})) as weeks_ago,
-                  YEARWEEK(#{activity_options[:by]}) AS unique_week
+                  ((EXTRACT(year from now()) - EXTRACT(year from #{activity_options[:by]}))*52)+(EXTRACT(week from now())-EXTRACT(week from #{activity_options[:by]})) as weeks_ago,
+                  (EXTRACT(year FROM #{activity_options[:by]})*100 + EXTRACT(week FROM #{activity_options[:by]})) as unique_week
                 FROM #{self.table_name}
                 WHERE #{activity_scope} AND #{activity_options[:by]} > ?
-                GROUP BY unique_week
+                GROUP BY created_at, unique_week
                 ORDER BY #{activity_options[:by]} ASC",
                 since.to_s(:db)
               ]
@@ -83,11 +89,15 @@ module Elctech
             sql_statement = sanitize_sql(
               ["SELECT
                   #{activity_options[:by]} AS timestamp,
-                  COUNT(*) AS activity_count,
-                  DATEDIFF(now(), #{activity_options[:by]}) as days_ago
-                FROM #{self.table_name}
+                  COUNT(*) AS activity_count," +
+		  if adapter == 'postgresql'
+                    " (now() - #{activity_options[:by]}) as days_ago "
+		  else
+                    " DATEDIFF(now(), #{activity_options[:by]}) as days_ago "
+		  end +
+                "FROM #{self.table_name}
                 WHERE #{activity_scope} AND #{activity_options[:by]} > ?
-                GROUP BY days_ago
+                GROUP BY created_at, days_ago
                 ORDER BY #{activity_options[:by]} ASC",
                 since.to_s(:db)
               ]
